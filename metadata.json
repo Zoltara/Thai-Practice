@@ -1,5 +1,5 @@
 {
-  "name": "Thai Reading Practice",
+  "name": "Thai Practice",
   "description": "An application to practice reading Thai by generating random sentences based on a chosen topic. Users can write their understanding of the sentence, and an AI will provide feedback and corrections.",
   "requestFramePermissions": [
     "microphone"

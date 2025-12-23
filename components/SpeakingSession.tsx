@@ -1,12 +1,12 @@
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { PronunciationFeedback, VocabularyPracticeTarget, VocabularyItem } from '../types';
 import ProgressBar from './ProgressBar';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { StopIcon } from './icons/StopIcon';
+import { ArrowDownTrayIcon } from './icons/ArrowDownTrayIcon';
 import { generatePracticeWord, evaluatePronunciation, generateSpeech } from '../services/geminiService';
-import { blobToBase64, decode, decodeAudioData } from '../utils/audio';
+import { blobToBase64, decode, decodeAudioData, downloadBase64Audio } from '../utils/audio';
 
 interface SpeakingSessionProps {
   topic: string;
@@ -34,6 +34,7 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -57,13 +58,12 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
 
   useEffect(() => {
     fetchNewWord();
-    // Cleanup function to stop tracks if unmounting while recording
     return () => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
       }
     };
-  }, []); // Only run once on mount (fetchNewWord handles subsequent calls via next button)
+  }, []);
 
   const handleStartRecording = async () => {
     try {
@@ -80,7 +80,6 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        // Stop all tracks to release microphone
         stream.getTracks().forEach(track => track.stop());
         await processAudio(audioBlob);
       };
@@ -143,6 +142,19 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
     }
   };
 
+  const handleDownload = async () => {
+    if (!currentTarget || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const base64Audio = await generateSpeech(currentTarget.thai);
+      downloadBase64Audio(base64Audio, `thai_word_${progressCount}.pcm`);
+    } catch (e) {
+      console.error("Download failed", e);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handleNext = () => {
     onNext();
     fetchNewWord();
@@ -163,92 +175,108 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
       <div className="flex justify-between items-center mb-6">
         <div>
           <p className="text-sm text-slate-400">Pronunciation Practice</p>
-          <h2 className="text-xl font-semibold text-violet-400">{topic}</h2>
+          <h2 className="text-2xl font-semibold text-violet-400">{topic}</h2>
         </div>
       </div>
 
-      <div className="text-center space-y-8 min-h-[300px] flex flex-col justify-center">
+      <div className="text-center space-y-8 min-h-[350px] flex flex-col justify-center">
         {!currentTarget ? (
-           <div className="text-slate-400">Loading word...</div>
+           <div className="text-slate-400 text-lg">Loading word...</div>
         ) : (
           <>
-            <div className="space-y-2">
-              <h3 className="text-5xl md:text-6xl font-thai font-bold text-slate-100">{currentTarget.thai}</h3>
-              <p className="text-xl text-cyan-400">{currentTarget.phonetic}</p>
-              <p className="text-slate-400">{currentTarget.english}</p>
+            <div className="space-y-3">
+              <h3 className="text-6xl md:text-7xl font-thai font-bold text-slate-100">{currentTarget.thai}</h3>
+              <p className="text-2xl md:text-3xl font-medium text-cyan-400">{currentTarget.phonetic}</p>
+              <p className="text-lg md:text-xl text-slate-400">{currentTarget.english}</p>
             </div>
 
             {/* Controls */}
-            <div className="flex justify-center gap-6 items-center">
+            <div className="flex justify-center gap-8 items-center">
               <button
-                onClick={handleListen}
-                disabled={isAudioLoading || isRecording}
-                className="flex flex-col items-center gap-2 group"
-                title="Listen to pronunciation"
+                onClick={handleDownload}
+                disabled={isDownloading || isRecording}
+                className="flex flex-col items-center gap-3 group"
+                title="Save reference audio"
               >
-                <div className="p-4 rounded-full bg-slate-700 hover:bg-slate-600 transition-all shadow-lg group-disabled:opacity-50">
-                   {isAudioLoading ? (
-                        <div className="w-6 h-6 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
+                <div className="p-5 rounded-full bg-slate-700 hover:bg-slate-600 transition-all shadow-lg group-disabled:opacity-50">
+                   {isDownloading ? (
+                        <div className="w-7 h-7 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
                    ) : (
-                       <SpeakerIcon className="w-6 h-6 text-slate-200" />
+                       <ArrowDownTrayIcon className="w-7 h-7 text-slate-200" />
                    )}
                 </div>
-                <span className="text-xs text-slate-400 font-medium">Listen</span>
+                <span className="text-sm text-slate-400 font-semibold">Save</span>
               </button>
 
               <button
                 onClick={isRecording ? handleStopRecording : handleStartRecording}
                 disabled={isProcessing || isAudioLoading}
-                className={`flex flex-col items-center gap-2 group transition-all transform ${isRecording ? 'scale-110' : 'hover:scale-105'}`}
+                className={`flex flex-col items-center gap-3 group transition-all transform ${isRecording ? 'scale-110' : 'hover:scale-105'}`}
               >
-                <div className={`p-6 rounded-full shadow-xl transition-all ${
+                <div className={`p-8 rounded-full shadow-xl transition-all ${
                   isRecording ? 'bg-red-500 animate-pulse ring-4 ring-red-500/30' : 'bg-violet-500 hover:bg-violet-600'
                 }`}>
                   {isRecording ? (
-                    <StopIcon className="w-8 h-8 text-white" />
+                    <StopIcon className="w-10 h-10 text-white" />
                   ) : (
-                    <MicrophoneIcon className="w-8 h-8 text-white" />
+                    <MicrophoneIcon className="w-10 h-10 text-white" />
                   )}
                 </div>
-                <span className="text-xs text-slate-400 font-medium">
+                <span className="text-sm text-slate-400 font-semibold uppercase tracking-wider">
                   {isRecording ? 'Stop' : 'Record'}
                 </span>
+              </button>
+
+              <button
+                onClick={handleListen}
+                disabled={isAudioLoading || isRecording}
+                className="flex flex-col items-center gap-3 group"
+                title="Listen to pronunciation"
+              >
+                <div className="p-5 rounded-full bg-slate-700 hover:bg-slate-600 transition-all shadow-lg group-disabled:opacity-50">
+                   {isAudioLoading ? (
+                        <div className="w-7 h-7 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
+                   ) : (
+                       <SpeakerIcon className="w-7 h-7 text-slate-200" />
+                   )}
+                </div>
+                <span className="text-sm text-slate-400 font-semibold">Listen</span>
               </button>
             </div>
 
             {/* Error Message */}
-            {error && <p className="text-red-400 text-sm animate-fade-in">{error}</p>}
+            {error && <p className="text-red-400 text-base animate-fade-in">{error}</p>}
 
             {/* Feedback Section */}
             {feedback && (
-              <div className="bg-slate-900/50 rounded-lg p-6 border border-slate-700 animate-fade-in-up">
-                <div className="flex flex-col items-center mb-4">
-                  <span className="text-slate-400 text-sm uppercase tracking-wider font-semibold mb-1">Score</span>
-                  <div className={`text-4xl font-bold ${getScoreColor(feedback.score)}`}>
+              <div className="bg-slate-900/50 rounded-xl p-8 border border-slate-700 animate-fade-in-up">
+                <div className="flex flex-col items-center mb-6">
+                  <span className="text-slate-400 text-sm uppercase tracking-wider font-bold mb-2">Score</span>
+                  <div className={`text-5xl font-extrabold ${getScoreColor(feedback.score)}`}>
                     {feedback.score}/100
                   </div>
                 </div>
                 
-                <div className="text-left space-y-3">
-                    <div className="p-3 bg-slate-800/50 rounded border-l-4 border-violet-500">
-                        <p className="text-slate-300 text-sm">{feedback.feedback}</p>
+                <div className="text-left space-y-4">
+                    <div className="p-4 bg-slate-800/50 rounded-lg border-l-4 border-violet-500">
+                        <p className="text-slate-300 text-base md:text-lg">{feedback.feedback}</p>
                     </div>
-                    <div className="p-3 bg-slate-800/50 rounded border-l-4 border-cyan-500">
-                         <span className="text-xs font-bold text-cyan-400 block mb-1">TIP</span>
-                        <p className="text-slate-300 text-sm">{feedback.tips}</p>
+                    <div className="p-4 bg-slate-800/50 rounded-lg border-l-4 border-cyan-500">
+                         <span className="text-xs font-bold text-cyan-400 block mb-1 uppercase tracking-widest">TIP</span>
+                        <p className="text-slate-300 text-base md:text-lg">{feedback.tips}</p>
                     </div>
                 </div>
 
-                <div className="flex gap-3 mt-6">
+                <div className="flex flex-col sm:flex-row gap-4 mt-8">
                     <button
                         onClick={() => onToggleDictionaryWord({ thai: currentTarget.thai, english: currentTarget.english })}
-                        className="flex-1 py-3 px-4 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold transition-colors"
+                        className="flex-1 py-4 px-6 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-lg transition-colors"
                     >
                         Save Word
                     </button>
                     <button
                         onClick={handleNext}
-                        className="flex-1 py-3 px-4 rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-bold transition-colors shadow-lg shadow-violet-500/20"
+                        className="flex-1 py-4 px-6 rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-bold text-lg transition-colors shadow-lg shadow-violet-500/20"
                     >
                         Next Word
                     </button>

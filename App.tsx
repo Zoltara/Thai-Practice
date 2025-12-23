@@ -81,7 +81,6 @@ const App: React.FC = () => {
     if (selectedMode === 'reading') {
       handleNewParagraph(selectedTopic);
     }
-    // Speaking mode fetches its first word inside the component on mount
   };
 
   const handleSubmitTranslation = async () => {
@@ -151,7 +150,6 @@ const App: React.FC = () => {
     setError(null);
     setUserTranslation('');
     setProgressCount(0);
-    // Mode defaults back to reading or stays same? Let's keep last selection logic in selector state, but here just reset
   };
 
   const renderContent = () => {
@@ -204,42 +202,42 @@ const App: React.FC = () => {
         onClose={() => setIsDictionaryVisible(false)}
         onToggleWord={handleToggleDictionaryWord}
       />
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center p-4 pb-24">
-        <div className="w-full max-w-3xl mx-auto">
-          <header className="flex justify-center items-center mb-8 w-full">
+      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col p-3 md:p-6 pb-44 md:pb-64 overflow-x-hidden overflow-y-auto">
+        <div className="w-full max-w-3xl mx-auto flex flex-col">
+          <header className="flex justify-center items-center mb-6 md:mb-10 w-full pt-4">
             <div className="text-center">
-              <div className="flex items-center justify-center gap-3 mb-2">
-                <BookOpenIcon className="w-8 h-8 text-cyan-400" />
-                <h1 className="text-3xl md:text-4xl font-bold tracking-tight bg-gradient-to-r from-cyan-400 to-violet-500 text-transparent bg-clip-text whitespace-nowrap">
+              <div className="flex items-center justify-center gap-3 mb-2 md:mb-3">
+                <BookOpenIcon className="w-7 h-7 md:w-10 md:h-10 text-cyan-400" />
+                <h1 className="text-3xl md:text-5xl font-bold tracking-tight bg-gradient-to-r from-cyan-400 to-violet-500 text-transparent bg-clip-text whitespace-nowrap">
                   Thai Practice
                 </h1>
               </div>
-              <p className="text-slate-400">Hone your Thai reading and speaking skills with AI.</p>
+              <p className="text-sm md:text-base text-slate-400">Hone your Thai reading and speaking skills with AI.</p>
             </div>
           </header>
 
-          <main className="bg-slate-800/50 backdrop-blur-sm rounded-2xl shadow-2xl shadow-slate-950/50 p-6 md:p-8 border border-slate-700">
+          <main className="bg-slate-800/50 backdrop-blur-sm rounded-xl md:rounded-2xl shadow-2xl shadow-slate-950/50 p-5 md:p-10 border border-slate-700">
             {renderContent()}
           </main>
         </div>
       </div>
-      <footer className="fixed bottom-0 left-0 right-0 bg-slate-900/80 backdrop-blur-sm border-t border-slate-700">
-        <div className="max-w-3xl mx-auto p-3 flex justify-center items-center gap-4">
+      <footer className="fixed bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-md border-t border-slate-700 z-40">
+        <div className="max-w-3xl mx-auto p-4 flex justify-center items-center gap-12">
             {topic && (
                 <button 
                     onClick={resetSession}
-                    className="flex flex-col items-center justify-center gap-1 text-slate-300 hover:text-cyan-400 transition-colors w-24"
+                    className="flex flex-col items-center justify-center gap-1.5 text-slate-300 hover:text-cyan-400 transition-colors"
                 >
-                    <HomeIcon className="w-6 h-6" />
-                    <span className="text-xs font-medium">Home</span>
+                    <HomeIcon className="w-7 h-7" />
+                    <span className="text-xs md:text-sm font-medium uppercase tracking-wider">Home</span>
                 </button>
             )}
             <button 
                 onClick={() => setIsDictionaryVisible(true)}
-                className="flex flex-col items-center justify-center gap-1 text-slate-300 hover:text-cyan-400 transition-colors w-24"
+                className="flex flex-col items-center justify-center gap-1.5 text-slate-300 hover:text-cyan-400 transition-colors"
             >
-                <BookmarkIcon className="w-6 h-6" />
-                <span className="text-xs font-medium">My Dictionary</span>
+                <BookmarkIcon className="w-7 h-7" />
+                <span className="text-xs md:text-sm font-medium uppercase tracking-wider">Dictionary</span>
             </button>
         </div>
       </footer>
