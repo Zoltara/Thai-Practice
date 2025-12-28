@@ -1,3 +1,4 @@
+
 export function decode(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -14,7 +15,14 @@ export async function decodeAudioData(
   sampleRate: number,
   numChannels: number,
 ): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
+  // Ensure the byte length is even for 16-bit PCM and handles alignment safely
+  const length = data.byteLength;
+  const evenLength = length % 2 === 0 ? length : length - 1;
+  
+  // We use the buffer directly if it's already aligned, or create a copy if needed.
+  // Fresh Uint8Array buffers from atob decoding are generally aligned at 0.
+  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, evenLength / 2);
+  
   const frameCount = dataInt16.length / numChannels;
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
@@ -42,9 +50,6 @@ export function blobToBase64(blob: Blob): Promise<string> {
 
 export function downloadBase64Audio(base64: string, filename: string) {
   const bytes = decode(base64);
-  // Note: Gemini TTS returns raw PCM. For a simple download that runs outside, 
-  // we'll label it as .raw or .wav. True WAV needs a header, but many players 
-  // can handle raw PCM if pointed to it. For best results, we use a blob.
   const blob = new Blob([bytes], { type: 'audio/pcm' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

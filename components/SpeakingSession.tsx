@@ -1,18 +1,20 @@
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { PronunciationFeedback, VocabularyPracticeTarget, VocabularyItem } from '../types';
+import { PronunciationFeedback, VocabularyPracticeTarget, VocabularyItem, Language } from '../types';
 import ProgressBar from './ProgressBar';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { StopIcon } from './icons/StopIcon';
-import { ArrowDownTrayIcon } from './icons/ArrowDownTrayIcon';
 import { generatePracticeWord, evaluatePronunciation, generateSpeech } from '../services/geminiService';
-import { blobToBase64, decode, decodeAudioData, downloadBase64Audio } from '../utils/audio';
+import { blobToBase64, decode, decodeAudioData } from '../utils/audio';
 
 interface SpeakingSessionProps {
   topic: string;
+  language: Language;
   onNext: () => void;
   progressCount: number;
   totalItems: number;
+  dictionary: VocabularyItem[];
   onToggleDictionaryWord: (item: VocabularyItem) => void;
 }
 
@@ -24,17 +26,18 @@ const LoadingSpinner: React.FC = () => (
 
 const SpeakingSession: React.FC<SpeakingSessionProps> = ({
   topic,
+  language,
   onNext,
   progressCount,
   totalItems,
+  dictionary,
   onToggleDictionaryWord
 }) => {
   const [currentTarget, setCurrentTarget] = useState<VocabularyPracticeTarget | null>(null);
-  const [feedback, setFeedback] = useState<PronunciationFeedback | null>(null);
+  const [feedback, setFeedback] = useState<(PronunciationFeedback & { isHelpReveal?: boolean }) | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -46,15 +49,15 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
     setFeedback(null);
     setError(null);
     try {
-      const word = await generatePracticeWord(topic, currentTarget?.thai);
-      setCurrentTarget(word);
+      const wordData = await generatePracticeWord(topic, language, currentTarget?.word);
+      setCurrentTarget(wordData);
     } catch (e) {
-      setError('Failed to generate a new word.');
+      setError('Failed to generate content.');
       console.error(e);
     } finally {
       setIsProcessing(false);
     }
-  }, [topic, currentTarget]);
+  }, [topic, language, currentTarget]);
 
   useEffect(() => {
     fetchNewWord();
@@ -88,7 +91,7 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
       setIsRecording(true);
       setError(null);
     } catch (e) {
-      setError('Could not access microphone. Please allow permissions.');
+      setError('Could not access microphone.');
       console.error(e);
     }
   };
@@ -105,19 +108,34 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
     setIsProcessing(true);
     try {
       const base64Audio = await blobToBase64(audioBlob);
-      const result = await evaluatePronunciation(currentTarget.thai, base64Audio, 'audio/webm');
-      setFeedback(result);
+      const result = await evaluatePronunciation(currentTarget.word, base64Audio, 'audio/webm', language);
+      setFeedback({ ...result, isHelpReveal: false });
     } catch (e) {
-      setError('Failed to evaluate pronunciation. Try again.');
+      setError('Evaluation failed.');
       console.error(e);
     } finally {
       setIsProcessing(false);
     }
   };
 
+  const handleHelp = () => {
+    if (!currentTarget) return;
+    setFeedback({
+      score: 0,
+      isHelpReveal: true,
+      feedback: "Don't worry! Try listening to the pronunciation and follow these tips to improve:",
+      tips: `Listen closely to the ${language} pronunciation. Focus on the distinct ${language === 'Thai' ? 'tones' : 'syllables'} and flow.`
+    });
+  };
+
+  const handleSkip = () => {
+    fetchNewWord();
+  };
+
   const handleListen = async () => {
     if (!currentTarget || isAudioLoading) return;
     setIsAudioLoading(true);
+    setError(null);
     try {
         if (!audioContextRef.current) {
             audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
@@ -127,7 +145,7 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
             await audioContext.resume();
         }
 
-        const base64Audio = await generateSpeech(currentTarget.thai);
+        const base64Audio = await generateSpeech(currentTarget.word, language);
         const audioBytes = decode(base64Audio);
         const audioBuffer = await decodeAudioData(audioBytes, audioContext, 24000, 1);
         
@@ -137,21 +155,9 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
         source.start();
     } catch (e) {
       console.error("Audio playback error", e);
+      setError("Speech failed.");
     } finally {
       setIsAudioLoading(false);
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!currentTarget || isDownloading) return;
-    setIsDownloading(true);
-    try {
-      const base64Audio = await generateSpeech(currentTarget.thai);
-      downloadBase64Audio(base64Audio, `thai_word_${progressCount}.pcm`);
-    } catch (e) {
-      console.error("Download failed", e);
-    } finally {
-      setIsDownloading(false);
     }
   };
 
@@ -161,53 +167,62 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
   };
 
   const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-green-400';
-    if (score >= 50) return 'text-amber-400';
+    const s = score <= 1 ? score * 100 : score;
+    if (s >= 80) return 'text-green-400';
+    if (s >= 50) return 'text-yellow-400';
     return 'text-red-400';
   };
+
+  const langFont = language === 'Thai' ? 'font-thai' : 'font-hebrew';
+  const isRTL = language === 'Hebrew';
+
+  const getHeaderText = () => {
+    if (!feedback) return '';
+    if (feedback.isHelpReveal) return 'Maybe Next Time';
+    const s = feedback.score <= 1 ? feedback.score * 100 : feedback.score;
+    return s >= 80 ? 'Excellent!' : 'Good try';
+  };
+
+  const getHeaderColorClass = () => {
+    if (!feedback) return '';
+    if (feedback.isHelpReveal) return 'text-red-500';
+    return getScoreColor(feedback.score);
+  }
+
+  const isWordSaved = currentTarget ? dictionary.some(item => item.word === currentTarget.word) : false;
+
+  const displayScore = feedback ? Math.round(feedback.score <= 1 ? feedback.score * 100 : feedback.score) : 0;
 
   return (
     <div className="relative animate-fade-in">
       <div className="mb-6">
-        <ProgressBar current={progressCount} total={totalItems} />
+        <ProgressBar current={progressCount} total={totalItems} label="Item" />
       </div>
 
       <div className="flex justify-between items-center mb-6">
         <div>
-          <p className="text-sm text-slate-400">Pronunciation Practice</p>
+          <p className="text-sm text-slate-400">Speak &bull; {language}</p>
           <h2 className="text-2xl font-semibold text-violet-400">{topic}</h2>
         </div>
       </div>
 
       <div className="text-center space-y-8 min-h-[350px] flex flex-col justify-center">
         {!currentTarget ? (
-           <div className="text-slate-400 text-lg">Loading word...</div>
+           <div className="text-slate-400 text-lg">Preparing...</div>
         ) : (
           <>
             <div className="space-y-3">
-              <h3 className="text-6xl md:text-7xl font-thai font-bold text-slate-100">{currentTarget.thai}</h3>
+              <h3 
+                className={`text-6xl md:text-7xl ${langFont} font-bold text-slate-100`}
+                dir={isRTL ? "rtl" : "ltr"}
+              >
+                {currentTarget.word}
+              </h3>
               <p className="text-2xl md:text-3xl font-medium text-cyan-400">{currentTarget.phonetic}</p>
-              <p className="text-lg md:text-xl text-slate-400">{currentTarget.english}</p>
+              <p className="text-lg md:text-xl text-slate-400 whitespace-pre-line">{currentTarget.english}</p>
             </div>
 
-            {/* Controls */}
-            <div className="flex justify-center gap-8 items-center">
-              <button
-                onClick={handleDownload}
-                disabled={isDownloading || isRecording}
-                className="flex flex-col items-center gap-3 group"
-                title="Save reference audio"
-              >
-                <div className="p-5 rounded-full bg-slate-700 hover:bg-slate-600 transition-all shadow-lg group-disabled:opacity-50">
-                   {isDownloading ? (
-                        <div className="w-7 h-7 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
-                   ) : (
-                       <ArrowDownTrayIcon className="w-7 h-7 text-slate-200" />
-                   )}
-                </div>
-                <span className="text-sm text-slate-400 font-semibold">Save</span>
-              </button>
-
+            <div className="flex justify-center gap-12 items-center">
               <button
                 onClick={isRecording ? handleStopRecording : handleStartRecording}
                 disabled={isProcessing || isAudioLoading}
@@ -216,11 +231,7 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
                 <div className={`p-8 rounded-full shadow-xl transition-all ${
                   isRecording ? 'bg-red-500 animate-pulse ring-4 ring-red-500/30' : 'bg-violet-500 hover:bg-violet-600'
                 }`}>
-                  {isRecording ? (
-                    <StopIcon className="w-10 h-10 text-white" />
-                  ) : (
-                    <MicrophoneIcon className="w-10 h-10 text-white" />
-                  )}
+                  {isRecording ? <StopIcon className="w-10 h-10 text-white" /> : <MicrophoneIcon className="w-10 h-10 text-white" />}
                 </div>
                 <span className="text-sm text-slate-400 font-semibold uppercase tracking-wider">
                   {isRecording ? 'Stop' : 'Record'}
@@ -231,56 +242,72 @@ const SpeakingSession: React.FC<SpeakingSessionProps> = ({
                 onClick={handleListen}
                 disabled={isAudioLoading || isRecording}
                 className="flex flex-col items-center gap-3 group"
-                title="Listen to pronunciation"
+                title="Listen"
               >
                 <div className="p-5 rounded-full bg-slate-700 hover:bg-slate-600 transition-all shadow-lg group-disabled:opacity-50">
-                   {isAudioLoading ? (
-                        <div className="w-7 h-7 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
-                   ) : (
-                       <SpeakerIcon className="w-7 h-7 text-slate-200" />
-                   )}
+                   {isAudioLoading ? <div className="w-7 h-7 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" /> : <SpeakerIcon className="w-7 h-7 text-slate-200" />}
                 </div>
-                <span className="text-sm text-slate-400 font-semibold">Listen</span>
+                <span className="text-sm text-slate-400 font-semibold uppercase tracking-wider">Listen</span>
               </button>
             </div>
 
-            {/* Error Message */}
             {error && <p className="text-red-400 text-base animate-fade-in">{error}</p>}
 
-            {/* Feedback Section */}
-            {feedback && (
+            {feedback ? (
               <div className="bg-slate-900/50 rounded-xl p-8 border border-slate-700 animate-fade-in-up">
-                <div className="flex flex-col items-center mb-6">
-                  <span className="text-slate-400 text-sm uppercase tracking-wider font-bold mb-2">Score</span>
-                  <div className={`text-5xl font-extrabold ${getScoreColor(feedback.score)}`}>
-                    {feedback.score}/100
+                {!feedback.isHelpReveal && feedback.score > 0 && (
+                  <div className="flex flex-col items-center mb-6">
+                    <span className="text-slate-400 text-sm uppercase tracking-wider font-bold mb-2">Score</span>
+                    <div className={`text-5xl font-extrabold ${getScoreColor(feedback.score)}`}>
+                      {displayScore}/100
+                    </div>
                   </div>
-                </div>
+                )}
                 
                 <div className="text-left space-y-4">
-                    <div className="p-4 bg-slate-800/50 rounded-lg border-l-4 border-violet-500">
-                        <p className="text-slate-300 text-base md:text-lg">{feedback.feedback}</p>
+                    <div className={`p-4 bg-slate-800/50 rounded-lg border-l-4 ${feedback.isHelpReveal ? 'border-red-500' : 'border-violet-500'}`}>
+                        <h4 className={`text-lg font-bold mb-1 ${getHeaderColorClass()}`}>
+                          {getHeaderText()}
+                        </h4>
+                        <p className="text-slate-300 text-base md:text-lg whitespace-pre-line">{feedback.feedback}</p>
                     </div>
                     <div className="p-4 bg-slate-800/50 rounded-lg border-l-4 border-cyan-500">
                          <span className="text-xs font-bold text-cyan-400 block mb-1 uppercase tracking-widest">TIP</span>
-                        <p className="text-slate-300 text-base md:text-lg">{feedback.tips}</p>
+                        <p className="text-slate-300 text-base md:text-lg whitespace-pre-line">{feedback.tips}</p>
                     </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 mt-8">
                     <button
-                        onClick={() => onToggleDictionaryWord({ thai: currentTarget.thai, english: currentTarget.english })}
-                        className="flex-1 py-4 px-6 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-lg transition-colors"
+                        onClick={() => onToggleDictionaryWord({ word: currentTarget.word, english: currentTarget.english })}
+                        className={`flex-1 py-4 px-6 rounded-lg font-bold text-lg transition-all ${
+                          isWordSaved ? 'bg-amber-500 text-slate-900 shadow-lg shadow-amber-500/20' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                        }`}
                     >
-                        Save Word
+                        {isWordSaved ? 'Saved to Dictionary' : 'Save to my Dictionary'}
                     </button>
                     <button
                         onClick={handleNext}
                         className="flex-1 py-4 px-6 rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-bold text-lg transition-colors shadow-lg shadow-violet-500/20"
                     >
-                        Next Word
+                        Next
                     </button>
                 </div>
+              </div>
+            ) : (
+              <div className="pt-4 flex justify-center gap-3">
+                <button
+                  onClick={handleSkip}
+                  className="px-6 py-3 rounded-lg border-2 border-slate-700 hover:border-slate-600 hover:bg-slate-700/50 text-slate-400 font-bold text-base transition-all"
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={handleHelp}
+                  className="px-6 py-3 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-slate-200 font-bold text-base transition-all"
+                >
+                  Help me (Show Tips)
+                </button>
               </div>
             )}
           </>

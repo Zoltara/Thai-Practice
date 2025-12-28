@@ -1,23 +1,27 @@
 
 import React from 'react';
-import { VocabularyItem } from '../types';
+import { VocabularyItem, Language } from '../types';
 import { StarIcon } from './icons/StarIcon';
 import { StarOutlineIcon } from './icons/StarOutlineIcon';
 
 interface VocabularyListProps {
   vocabulary: VocabularyItem[];
   dictionary: VocabularyItem[];
+  language?: Language;
   onToggleWord: (item: VocabularyItem) => void;
 }
 
-const VocabularyList: React.FC<VocabularyListProps> = ({ vocabulary, dictionary, onToggleWord }) => {
+const VocabularyList: React.FC<VocabularyListProps> = ({ vocabulary, dictionary, language = 'Thai', onToggleWord }) => {
   if (!vocabulary || vocabulary.length === 0) {
     return null;
   }
 
-  const isWordInDictionary = (thaiWord: string) => {
-    return dictionary.some(item => item.thai === thaiWord);
+  const isWordInDictionary = (word: string) => {
+    return dictionary.some(item => item.word === word);
   };
+
+  const langFont = language === 'Thai' ? 'font-thai' : 'font-hebrew';
+  const isRTL = language === 'Hebrew';
 
   return (
     <div className="mt-6 animate-fade-in">
@@ -26,16 +30,16 @@ const VocabularyList: React.FC<VocabularyListProps> = ({ vocabulary, dictionary,
         <ul className="divide-y divide-slate-700">
           {vocabulary.map((item, index) => (
             <li key={index} className="flex justify-between items-center p-3 gap-3">
-              <div>
-                <span className="font-thai text-slate-200 text-lg">{item.thai}</span>
-                <span className="text-slate-400 block text-sm">{item.english}</span>
+              <div dir={isRTL ? "rtl" : "ltr"} className="text-left w-full">
+                <span className={`${langFont} text-slate-200 text-lg`}>{item.word}</span>
+                <span className="text-slate-400 block text-sm whitespace-pre-line">{item.english}</span>
               </div>
               <button
                 onClick={() => onToggleWord(item)}
-                className="text-amber-400 hover:text-amber-300 p-2 -m-2 rounded-full transition-colors"
-                aria-label={isWordInDictionary(item.thai) ? 'Remove from dictionary' : 'Save to dictionary'}
+                className="text-amber-400 hover:text-amber-300 p-2 -m-2 rounded-full transition-colors flex-shrink-0"
+                aria-label={isWordInDictionary(item.word) ? 'Remove from dictionary' : 'Save to dictionary'}
               >
-                {isWordInDictionary(item.thai) ? (
+                {isWordInDictionary(item.word) ? (
                   <StarIcon className="w-6 h-6" />
                 ) : (
                   <StarOutlineIcon className="w-6 h-6" />

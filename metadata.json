@@ -1,6 +1,6 @@
 {
-  "name": "Thai Practice",
-  "description": "An application to practice reading Thai by generating random sentences based on a chosen topic. Users can write their understanding of the sentence, and an AI will provide feedback and corrections.",
+  "name": "Language Practice",
+  "description": "An application to practice reading and speaking Thai or Hebrew by generating random content based on topics. Features AI feedback, speech generation, and pronunciation evaluation.",
   "requestFramePermissions": [
     "microphone"
   ]

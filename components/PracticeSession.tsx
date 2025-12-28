@@ -1,16 +1,15 @@
+
 import React, { useState } from 'react';
-import { Feedback, VocabularyItem } from '../types';
+import { Feedback, VocabularyItem, Language } from '../types';
 import FeedbackDisplay from './FeedbackDisplay';
 import ProgressBar from './ProgressBar';
 import VocabularyList from './VocabularyList';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { ListBulletIcon } from './icons/ListBulletIcon';
-import { ArrowDownTrayIcon } from './icons/ArrowDownTrayIcon';
-import { generateSpeech } from '../services/geminiService';
-import { downloadBase64Audio } from '../utils/audio';
 
 interface PracticeSessionProps {
   topic: string;
+  language: Language;
   currentParagraph: string;
   feedback: Feedback | null;
   isLoading: boolean;
@@ -19,7 +18,9 @@ interface PracticeSessionProps {
   userTranslation: string;
   setUserTranslation: (value: string) => void;
   onSubmit: () => void;
+  onHelp: () => void;
   onNext: () => void;
+  onSkip: () => void;
   onListen: () => void;
   progressCount: number;
   totalParagraphs: number;
@@ -28,13 +29,14 @@ interface PracticeSessionProps {
 }
 
 const LoadingSpinner: React.FC = () => (
-  <div className="absolute inset-0 bg-slate-800 bg-opacity-50 flex items-center justify-center rounded-xl">
+  <div className="absolute inset-0 bg-slate-800 bg-opacity-50 flex items-center justify-center rounded-xl z-20">
     <div className="w-12 h-12 border-4 border-t-cyan-400 border-r-cyan-400 border-b-cyan-400 border-l-transparent rounded-full animate-spin"></div>
   </div>
 );
 
 const PracticeSession: React.FC<PracticeSessionProps> = ({
   topic,
+  language,
   currentParagraph,
   feedback,
   isLoading,
@@ -43,7 +45,9 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
   userTranslation,
   setUserTranslation,
   onSubmit,
+  onHelp,
   onNext,
+  onSkip,
   onListen,
   progressCount,
   totalParagraphs,
@@ -51,7 +55,6 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
   onToggleDictionaryWord,
 }) => {
   const [showVocabulary, setShowVocabulary] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -67,28 +70,18 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
     onNext();
   };
 
-  const handleDownload = async () => {
-    if (!currentParagraph || isDownloading) return;
-    setIsDownloading(true);
-    try {
-      const base64Audio = await generateSpeech(currentParagraph);
-      downloadBase64Audio(base64Audio, `thai_practice_${progressCount}.pcm`);
-    } catch (e) {
-      console.error("Download failed", e);
-    } finally {
-      setIsDownloading(false);
-    }
-  };
+  const isRTL = language === 'Hebrew';
+  const langFont = language === 'Thai' ? 'font-thai' : 'font-hebrew';
 
   return (
     <div className="relative animate-fade-in">
       <div className="mb-6">
-        <ProgressBar current={progressCount} total={totalParagraphs} />
+        <ProgressBar current={progressCount} total={totalParagraphs} label="Item" />
       </div>
 
       <div className="flex justify-between items-center mb-6">
         <div>
-          <p className="text-sm text-slate-400">Topic</p>
+          <p className="text-sm text-slate-400">Practice &bull; {language}</p>
           <h2 className="text-2xl font-semibold text-cyan-400">{topic}</h2>
         </div>
       </div>
@@ -97,22 +90,9 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="block text-base font-medium text-slate-400">
-              Thai Paragraph:
+              {language} Content:
             </label>
             <div className="flex gap-2">
-              <button
-                onClick={handleDownload}
-                disabled={isDownloading || isLoading || !currentParagraph}
-                className="flex items-center gap-2 text-base px-4 py-2 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-slate-100 transition-colors disabled:opacity-50"
-                title="Save audio file"
-              >
-                {isDownloading ? (
-                   <span className="w-5 h-5 border-2 border-t-slate-400 border-r-slate-400 border-b-slate-400 border-l-transparent rounded-full animate-spin"></span>
-                ) : (
-                  <ArrowDownTrayIcon className="w-5 h-5" />
-                )}
-                <span className="hidden sm:inline">Save</span>
-              </button>
               <button
                 onClick={onListen}
                 disabled={isAudioLoading || isLoading || !currentParagraph}
@@ -128,7 +108,10 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
             </div>
           </div>
           <div className="bg-slate-900/70 p-6 rounded-lg min-h-[140px] flex items-center justify-center text-center">
-            <p className="font-thai text-2xl md:text-3xl leading-relaxed tracking-wide text-slate-100">
+            <p 
+              className={`${langFont} text-2xl md:text-3xl leading-relaxed tracking-wide text-slate-100`}
+              dir={isRTL ? "rtl" : "ltr"}
+            >
               {currentParagraph || '...'}
             </p>
           </div>
@@ -143,7 +126,7 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
             value={userTranslation}
             onChange={(e) => setUserTranslation(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type what you think it means..."
+            placeholder="Type the meaning..."
             rows={3}
             className="w-full bg-slate-700/50 border-2 border-slate-600 rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400 transition-colors text-slate-200 text-lg disabled:opacity-50"
             disabled={!!feedback || isLoading}
@@ -158,6 +141,7 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
           <VocabularyList 
             vocabulary={feedback.vocabulary} 
             dictionary={dictionary}
+            language={language}
             onToggleWord={onToggleDictionaryWord}
           />
         )}
@@ -178,17 +162,33 @@ const PracticeSession: React.FC<PracticeSessionProps> = ({
                 disabled={isLoading}
                 className="flex-1 w-full bg-cyan-500 hover:bg-cyan-600 text-slate-900 font-bold py-4 px-6 rounded-lg transition-all duration-200 transform hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 focus:ring-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed text-lg"
               >
-                {isLoading ? 'Loading...' : 'Next Paragraph'}
+                {isLoading ? 'Loading...' : 'Next'}
               </button>
             </div>
           ) : (
-            <button
-              onClick={onSubmit}
-              disabled={isLoading || !userTranslation.trim()}
-              className="w-full bg-violet-500 hover:bg-violet-600 text-white font-bold py-4 px-6 rounded-lg transition-all duration-200 transform hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 focus:ring-violet-400 disabled:opacity-50 disabled:cursor-not-allowed text-lg"
-            >
-              {isLoading ? 'Checking...' : 'Check My Answer'}
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={onSkip}
+                disabled={isLoading}
+                className="px-6 py-4 rounded-lg border-2 border-slate-600 hover:border-slate-500 hover:bg-slate-700/50 text-slate-400 font-bold text-lg transition-all focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-50"
+              >
+                Skip
+              </button>
+              <button
+                onClick={onHelp}
+                disabled={isLoading}
+                className="px-6 py-4 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold text-lg transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-50"
+              >
+                Help me
+              </button>
+              <button
+                onClick={onSubmit}
+                disabled={isLoading || !userTranslation.trim()}
+                className="flex-grow bg-violet-500 hover:bg-violet-600 text-white font-bold py-4 px-6 rounded-lg transition-all duration-200 transform hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 focus:ring-violet-400 disabled:opacity-50 disabled:cursor-not-allowed text-lg"
+              >
+                {isLoading ? 'Checking...' : 'Check My Answer'}
+              </button>
+            </div>
           )}
         </div>
       </div>

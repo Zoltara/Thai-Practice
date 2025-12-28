@@ -1,6 +1,8 @@
 
+export type Language = 'Thai' | 'Hebrew';
+
 export interface VocabularyItem {
-  thai: string;
+  word: string; // The foreign word in its native script
   english: string;
 }
 
@@ -9,12 +11,13 @@ export interface Feedback {
   feedback: string;
   correctTranslation: string;
   vocabulary: VocabularyItem[];
+  isHelpReveal?: boolean;
 }
 
-export type PracticeMode = 'reading' | 'speaking';
+export type PracticeMode = 'reading' | 'speaking' | 'vocabulary';
 
 export interface VocabularyPracticeTarget {
-  thai: string;
+  word: string; // The foreign word in its native script
   phonetic: string;
   english: string;
 }
