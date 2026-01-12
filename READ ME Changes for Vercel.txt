@@ -1,0 +1,54 @@
+There is **ONE thing** in this file that is breaking Vercel.
+
+STEP 1:
+### Replace this whole function in services\geminiService.ts:
+
+const getAI = () => {
+  if (!process.env.API_KEY) {
+    throw new Error("API_KEY environment variable not set");
+  }
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+};
+
+
+### With THIS version:
+
+const getAI = () => {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("VITE_GEMINI_API_KEY is not set");
+  }
+
+  return new GoogleGenAI({ apiKey });
+};
+
+
+-----------------------------
+STEP 2:
+## 📄 What to do with `.env.local` 
+
+Change the exisiting text to this:
+
+VITE_GEMINI_API_KEY=YOUR_REAL_API_KEY
+
+Paste the API_KEY from Google AI Studio isntead of YOUR_REAL_API_KEY
+
+
+-----------------------------
+STEP 3:
+## 🌐 What to do on Vercel
+In Vercel → Project → Settings → Environment Variables
+
+Add:
+
+| Name                  | Value        |
+| --------------------- | ------------ |
+| `VITE_GEMINI_API_KEY` | same API key |
+
+Then click **Redeploy**.
+
+
+
+## ✅ After this, everything will work
+

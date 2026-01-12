@@ -15,21 +15,21 @@ export async function decodeAudioData(
   sampleRate: number,
   numChannels: number,
 ): Promise<AudioBuffer> {
-  // Ensure the byte length is even for 16-bit PCM and handles alignment safely
+  // Ensure the byte length is even for 16-bit PCM
   const length = data.byteLength;
   const evenLength = length % 2 === 0 ? length : length - 1;
   
-  // We use the buffer directly if it's already aligned, or create a copy if needed.
-  // Fresh Uint8Array buffers from atob decoding are generally aligned at 0.
-  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, evenLength / 2);
-  
-  const frameCount = dataInt16.length / numChannels;
+  // Use DataView for safe, endian-aware reading of the PCM bytes
+  const view = new DataView(data.buffer, data.byteOffset, evenLength);
+  const frameCount = (evenLength / 2) / numChannels;
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
   for (let channel = 0; channel < numChannels; channel++) {
     const channelData = buffer.getChannelData(channel);
     for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+      // Gemini TTS usually returns 16-bit little-endian PCM
+      const offset = (i * numChannels + channel) * 2;
+      channelData[i] = view.getInt16(offset, true) / 32768.0;
     }
   }
   return buffer;

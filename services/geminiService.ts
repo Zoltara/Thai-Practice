@@ -2,266 +2,302 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { Feedback, VocabularyPracticeTarget, PronunciationFeedback, Language } from '../types';
 
-const getAI = () => {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+/**
+ * Robust JSON extraction from AI responses.
+ */
+const safeParseJSON = (text: string) => {
+  if (!text) throw new Error("Empty response from AI");
+  
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  const firstBracket = text.indexOf('[');
+  const lastBracket = text.lastIndexOf(']');
 
-  if (!apiKey) {
-    throw new Error("VITE_GEMINI_API_KEY is not set");
+  let start = -1;
+  let end = -1;
+
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    start = firstBrace;
+    end = lastBrace;
+  } else if (firstBracket !== -1) {
+    start = firstBracket;
+    end = lastBracket;
   }
 
-  return new GoogleGenAI({ apiKey });
+  if (start === -1 || end === -1 || end <= start) {
+    const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch (e) {
+      console.error("Final JSON Parse Error. Raw text:", text);
+      throw new Error("AI response was not in a valid format");
+    }
+  }
+
+  const jsonString = text.substring(start, end + 1);
+  try {
+    return JSON.parse(jsonString);
+  } catch (e) {
+    console.error("Substring JSON Parse Error. Extracted string:", jsonString);
+    throw new Error("Failed to parse AI response");
+  }
 };
 
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let delay = 1000;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      const status = error?.status || error?.error?.code;
+      let errorMessage = error?.message || "";
+      
+      const isQuotaExceeded = status === 429 || errorMessage.toLowerCase().includes("quota");
+      
+      if (errorMessage.includes("Requested entity was not found")) {
+        if (typeof window !== 'undefined' && (window as any).aistudio?.openSelectKey) {
+          (window as any).aistudio.openSelectKey();
+        }
+      }
+      
+      if (i === maxRetries - 1 || (!isQuotaExceeded && status !== 500 && status !== 503)) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay *= 2;
+    }
+  }
+  throw new Error("Service is temporarily unavailable. Please try again.");
+}
+
 const RANDOM_THEMES = [
-  "Daily routine and morning habits",
-  "At the supermarket buying groceries",
-  "Ordering food and drinks at a local restaurant",
-  "Talking about family members and home life",
-  "Common hobbies like reading, sports, or music",
-  "Weather, seasons, and what to wear",
-  "Simple directions and getting around the city",
-  "Describing your house and furniture",
-  "Talking about school, work, or daily tasks",
-  "Plans for the weekend and free time",
-  "Basic health, feeling well, and visiting a pharmacy",
-  "Expressing simple emotions and feelings",
-  "Colors, numbers, and telling the time",
-  "Common animals and household pets",
-  "Traveling by bus, train, or taxi",
-  "Buying clothes and shopping for essentials",
-  "Meeting new people and basic introductions",
-  "A walk in the park or nature",
-  "Daily objects found in a kitchen or bedroom",
-  "Simple polite phrases and social interactions"
+  "Daily routine", "At the supermarket", "Ordering food", "Family members", "Hobbies", "Weather", "Directions", "House", "Work tasks", "Socializing", "Health", "Tech", "Nature", "Emotions", "City Life"
 ];
 
-export const generateParagraph = async (topic: string, language: Language, previousParagraph?: string): Promise<string> => {
-  try {
-    const ai = getAI();
-    const salt = Math.random().toString(36).substring(7);
-    const chosenTheme = (topic.includes("Random") || topic === "Surprise Me")
-      ? RANDOM_THEMES[Math.floor(Math.random() * RANDOM_THEMES.length)] 
-      : topic;
+const SYSTEM_INSTRUCTION = `You are a world-class language tutor for Thai and Hebrew. Beginner level.
 
+CONTENT RULES:
+- The 'paragraph' and 'word' fields MUST contain ONLY the target language script (Thai or Hebrew).
+- NEVER include English translations or explanations inside the 'paragraph' or 'word' fields. 
+- All translations MUST go into 'correctTranslation' or 'english' fields.
+
+CRITICAL - NO REPETITION:
+- ABSOLUTELY NEVER generate any content that appears in the exclusion list provided (the EXCLUDE list).
+- Each sentence and word MUST be unique and different from all previous items.
+- Check thoroughly against the exclusion list before generating any content.
+
+STRICT MODE RULES:
+1. Thai mode: Use ONLY Thai and English. NEVER mention Hebrew.
+2. Hebrew mode: ALWAYS include English AND Thai translations for EVERYTHING (feedback and meanings).
+
+FORMATTING RULES (IMPORTANT):
+- For Hebrew mode: The 'feedback', 'correctTranslation', and 'correctMeaning' fields MUST contain the English version on line 1 and the Thai version on line 2 (separated by \\n). 
+- For Thai mode: Use English only for explanations.
+
+HEBREW SCRIPT:
+- ALWAYS include Niqqud (vowel points) in ALL Hebrew text.
+
+OUTPUT: Exactly ONE valid JSON object.`;
+
+export const generateParagraph = async (topic: string, language: Language, history: string[]): Promise<{ paragraph: string, phonetic: string }> => {
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    const chosenTheme = (topic.includes("Random") || topic === "Surprise Me") ? RANDOM_THEMES[Math.floor(Math.random() * RANDOM_THEMES.length)] : topic;
+    
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `You are a ${language} language teacher for absolute beginners. 
-      Generate a SHORT (2-3 sentences) paragraph using very common, high-frequency vocabulary.
-      
-      LANGUAGE: ${language}
-      TOPIC: ${chosenTheme}
-      RANDOM SEED: ${salt}
-      
-      CRITICAL INSTRUCTIONS:
-      1. Use ONLY the ${language} script.
-      2. Use SIMPLE, everyday words that a beginner would learn first.
-      3. If Hebrew: You MUST include niqqud (vowel points) to help the learner.
-      4. DO NOT include any English translations or phonetic guides in the 'paragraph' field.
-      5. The text must be natural but extremely simple.
-      ${previousParagraph ? `6. It MUST be different from: ${previousParagraph}` : ''}`,
+      contents: `Generate ONE Beginner ${language} sentence about: ${chosenTheme}. EXCLUDE: [${history.slice(-10).join(", ")}]. ENSURE NO ENGLISH IS IN THE PARAGRAPH FIELD.`,
       config: {
-        thinkingConfig: { thinkingBudget: 0 },
+        systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
-          properties: {
-            paragraph: { type: Type.STRING, description: `The simple paragraph in ${language} script.` },
+          properties: { 
+            paragraph: { type: Type.STRING },
+            phonetic: { type: Type.STRING }
           },
-          required: ["paragraph"],
+          required: ["paragraph", "phonetic"],
         },
       },
     });
-
-    const result = JSON.parse(response.text);
-    return result.paragraph;
-  } catch (error) {
-    console.error("Error generating paragraph:", error);
-    throw new Error("Could not generate a paragraph.");
-  }
+    
+    const result = safeParseJSON(response.text);
+    return { 
+      paragraph: result.paragraph.split('\n')[0].replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim(), 
+      phonetic: result.phonetic 
+    };
+  });
 };
 
-export const checkTranslation = async (targetText: string, userTranslation: string, language: Language): Promise<Feedback> => {
-  try {
-    const ai = getAI();
-    const isHebrew = language === 'Hebrew';
-    const languageInstruction = isHebrew
-      ? `Language: Hebrew. The student may answer in either English or Thai. Verify their understanding. For the 'correctTranslation' and vocabulary 'english' fields, follow this EXACT format:
-      [English Translation]
-      [Thai Translation]
-      Do NOT put Thai on the same line as English. Do NOT repeat the Thai translation.` 
-      : `Language: ${language}. Student is translating to English.`;
+export const checkTranslation = async (
+  targetText: string,
+  userTranslation: string,
+  language: Language
+): Promise<Feedback> => {
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    const isHelp = userTranslation === "[REQUEST_HELP_REVEAL_ANSWER]";
+
+    const contents = isHelp
+      ? `Provide translation for "${targetText}" in ${language}. For Hebrew mode, include English and Thai versions on separate lines.`
+      : `Check student translation for "${targetText}" in ${language}. Student said: "${userTranslation}". For Hebrew, feedback must include English and Thai lines.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `${languageInstruction}\nTarget Text: "${targetText}"\nStudent's Input: "${userTranslation}"\nCheck correctness and extract 3-5 vocab items from the text.`,
+      contents,
       config: {
-        thinkingConfig: { thinkingBudget: 0 },
+        systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             isCorrect: { type: Type.BOOLEAN },
+            status: { type: Type.STRING, enum: ["correct", "partial", "wrong"] },
             feedback: { type: Type.STRING },
-            correctTranslation: { type: Type.STRING, description: "If Hebrew, format as 'English\\nThai'. Use exactly one Thai translation." },
+            correctTranslation: { type: Type.STRING },
             vocabulary: {
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  word: { type: Type.STRING, description: `The ${language} word in its native script` },
-                  english: { type: Type.STRING, description: `The meaning. If Hebrew, format as 'English\\nThai'.` }
+                  word: { type: Type.STRING },
+                  phonetic: { type: Type.STRING },
+                  english: { type: Type.STRING },
+                  thai: { type: Type.STRING }
                 },
-                required: ["word", "english"]
+                required: ["word", "english", "phonetic"]
               }
             }
           },
-          required: ["isCorrect", "feedback", "correctTranslation", "vocabulary"],
-        },
-      },
+          required: ["isCorrect", "status", "feedback", "correctTranslation", "vocabulary"]
+        }
+      }
     });
 
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("Error checking translation:", error);
-    throw new Error("Could not get feedback.");
-  }
+    return safeParseJSON(response.text);
+  });
 };
 
-export const checkWordTranslation = async (targetWord: string, userTranslation: string, language: Language): Promise<{ isCorrect: boolean, feedback: string, correctMeaning: string }> => {
-  try {
-    const ai = getAI();
-    const isHebrew = language === 'Hebrew';
-    const languageInstruction = isHebrew
-      ? `Language: Hebrew. The student may answer in either English or Thai. Provide the correct meaning as: English meaning, then a newline (\\n), then the Thai meaning. Do NOT repeat the Thai translation.` 
-      : `Language: ${language}. Student is translating to English.`;
-
+export const checkWordTranslation = async (
+  targetWord: string,
+  userTranslation: string,
+  language: Language
+): Promise<{ isCorrect: boolean, status: 'correct' | 'partial' | 'wrong', feedback: string, correctMeaning: string }> => {
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `${languageInstruction}\nEvaluate word "${targetWord}" vs student input "${userTranslation}".`,
+      contents: `Evaluate student meaning for "${targetWord}" (${language}). Student input: "${userTranslation}". For Hebrew, respond with English and Thai on separate lines for BOTH feedback and correctMeaning.`,
       config: {
-        thinkingConfig: { thinkingBudget: 0 },
+        systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             isCorrect: { type: Type.BOOLEAN },
+            status: { type: Type.STRING, enum: ['correct' , 'partial' , 'wrong'] },
             feedback: { type: Type.STRING },
-            correctMeaning: { type: Type.STRING, description: `The meaning. If Hebrew, format as 'English\\nThai'.` }
+            correctMeaning: { type: Type.STRING }
           },
-          required: ["isCorrect", "feedback", "correctMeaning"]
+          required: ["isCorrect", "status", "feedback", "correctMeaning"]
         }
       }
     });
-
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("Error checking word translation:", error);
-    throw new Error("Could not check word translation.");
-  }
+    return safeParseJSON(response.text);
+  });
 };
 
-export const generateSpeech = async (text: string, language: Language): Promise<string> => {
-  try {
-    const ai = getAI();
-    const voiceName = language === 'Thai' ? 'Kore' : 'Puck';
-    const prompt = `Please say the following ${language} text clearly and naturally: ${text}`;
+export const generateSpeech = async (text: string, language: Language, voice: string = 'Kore'): Promise<string> => {
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    
+    // Clean text more reliably for TTS. 
+    let cleanText = text.replace(/\(.*\)/g, '').replace(/\[.*\]/g, '').trim();
+    
+    // Keep only the relevant script + basic punctuation. 
+    if (language === 'Thai') {
+      const matches = cleanText.match(/[\u0E00-\u0E7F\s.,?!]+/g);
+      cleanText = matches ? matches.join('').trim() : '';
+    } else if (language === 'Hebrew') {
+      const matches = cleanText.match(/[\u0590-\u05FF\s.,?!]+/g);
+      cleanText = matches ? matches.join('').trim() : '';
+    }
+    
+    if (!cleanText) throw new Error("No speakable text remaining after cleaning.");
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts: [{ text: cleanText }] }],
       config: {
         responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName },
-          },
-        },
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
       },
     });
     
-    if (!response.candidates || response.candidates.length === 0) {
-      throw new Error("The AI model returned no results.");
+    const candidate = response.candidates?.[0];
+    if (!candidate) {
+      throw new Error("The voice assistant failed to respond. Please try again.");
     }
 
-    const candidate = response.candidates[0];
-    if (!candidate.content || !candidate.content.parts) {
-      const finishReason = (candidate as any).finishReason || "UNKNOWN";
-      throw new Error(`The model failed to generate speech content. Reason: ${finishReason}`);
-    }
+    const audioPart = candidate.content?.parts?.find(p => p.inlineData?.mimeType.startsWith('audio/'));
+    const audioData = audioPart?.inlineData?.data;
 
-    for (const part of candidate.content.parts) {
-      if (part.inlineData && part.inlineData.data) {
-        return part.inlineData.data;
-      }
+    if (!audioData) {
+        const textReason = candidate.content?.parts?.find(p => p.text)?.text;
+        if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+           throw new Error(`Speech engine refused: ${candidate.finishReason}. The content might be flagged incorrectly.`);
+        }
+        throw new Error(textReason || "The speech generator could not process this specific text. Try skipping to the next one.");
     }
-
-    throw new Error("The API response did not contain any audio data.");
-  } catch (error: any) {
-    console.error("Error generating speech:", error);
-    throw new Error(error.message || "Speech generation failed.");
-  }
+    return audioData;
+  });
 };
 
-export const generatePracticeWord = async (topic: string, language: Language, previousWord?: string): Promise<VocabularyPracticeTarget> => {
-  try {
-    const ai = getAI();
-    const salt = Math.random().toString(36).substring(7);
-    const chosenTheme = (topic.includes("Random") || topic === "Surprise Me")
-      ? RANDOM_THEMES[Math.floor(Math.random() * RANDOM_THEMES.length)] 
-      : topic;
+export const generatePracticeWord = async (topic: string, language: Language, history: string[]): Promise<VocabularyPracticeTarget> => {
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    const chosenTheme = (topic.includes("Random") || topic === "Surprise Me") ? RANDOM_THEMES[Math.floor(Math.random() * RANDOM_THEMES.length)] : topic;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Generate exactly one unique, high-frequency everyday word or common phrase in ${language} for the topic: ${chosenTheme}.
-      
-      CRITICAL: 
-      1. Essential for basic daily conversation.
-      2. If Hebrew: You MUST include niqqud. Format 'english' field as 'English meaning\\nThai meaning'. Do NOT repeat the Thai translation.
-      3. The 'word' field MUST be in native script only.
-      
-      Random Seed: ${salt}
-      ${previousWord ? `MUST be different from: ${previousWord}` : ''}`,
+      contents: `Generate ONE new ${language} word/phrase for: ${chosenTheme}. EXCLUDE: [${history.slice(-10).join(", ")}]. ENSURE NO ENGLISH IS IN THE WORD FIELD.`,
       config: {
-        thinkingConfig: { thinkingBudget: 0 },
+        systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            word: { type: Type.STRING, description: `The common word in native script` },
+            word: { type: Type.STRING },
             phonetic: { type: Type.STRING },
-            english: { type: Type.STRING, description: `Meaning. If Hebrew, format as 'English\\nThai'.` }
+            english: { type: Type.STRING },
+            thai: { type: Type.STRING }
           },
           required: ["word", "phonetic", "english"]
         }
       }
     });
-
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("Error generating practice word:", error);
-    throw new Error("Could not generate a word.");
-  }
+    return safeParseJSON(response.text);
+  });
 };
 
 export const evaluatePronunciation = async (targetWord: string, audioBase64: string, mimeType: string, language: Language): Promise<PronunciationFeedback> => {
-  try {
-    const ai = getAI();
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: {
         parts: [
           { inlineData: { mimeType, data: audioBase64 } },
-          { text: `Evaluate the pronunciation of the ${language} word: "${targetWord}". 
-          IMPORTANT: Return the score as an INTEGER between 0 and 100.` }
+          { text: `Analyze pronunciation of "${targetWord}" in ${language}. Score 0-100. For Hebrew, include English and Thai tips on separate lines.` }
         ]
       },
       config: {
-        thinkingConfig: { thinkingBudget: 0 },
+        systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            score: { type: Type.NUMBER, description: "Score from 0 to 100." },
+            score: { type: Type.NUMBER },
             feedback: { type: Type.STRING },
             tips: { type: Type.STRING }
           },
@@ -269,10 +305,6 @@ export const evaluatePronunciation = async (targetWord: string, audioBase64: str
         }
       }
     });
-
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("Error evaluating pronunciation:", error);
-    throw new Error("Evaluation failed.");
-  }
+    return safeParseJSON(response.text);
+  });
 };
