@@ -5,7 +5,7 @@ import ProgressBar from './ProgressBar';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { StopIcon } from './icons/StopIcon';
-import { generatePracticeWord, evaluatePronunciation, generateSpeech } from '../services/geminiService';
+import { generatePracticeWord, evaluatePronunciation, generateSpeech, generateSpeechStream } from '../services/geminiService';
 import { blobToBase64, decode, decodeAudioData } from '../utils/audio';
 
 interface ThaiSpeakingSessionProps {
@@ -133,9 +133,24 @@ const ThaiSpeakingSession: React.FC<ThaiSpeakingSessionProps> = ({
 
     setIsAudioLoading(true);
     try {
-      const base64 = await generateSpeech(currentTarget.word, 'Thai', settings.voice);
-      setCurrentTarget(prev => prev ? { ...prev, audio: base64 } : prev);
-      await playAudio(base64);
+      // Use streaming for instant playback
+      const audioChunks: string[] = [];
+      let isFirstChunk = true;
+      
+      await generateSpeechStream(currentTarget.word, 'Thai', settings.voice, async (chunk) => {
+        audioChunks.push(chunk);
+        // Play first chunk immediately for low latency
+        if (isFirstChunk) {
+          isFirstChunk = false;
+          try { await playAudio(chunk); } catch (e) { /* ignore first chunk errors */ }
+        }
+      });
+      
+      // Cache the full audio for replay
+      if (audioChunks.length > 0) {
+        const fullAudio = audioChunks.join('');
+        setCurrentTarget(prev => prev ? { ...prev, audio: fullAudio } : prev);
+      }
     } catch (e: any) { setError(e?.message || "Audio failed."); } finally { setIsAudioLoading(false); }
   };
 

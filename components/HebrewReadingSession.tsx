@@ -62,6 +62,13 @@ const HebrewReadingSession: React.FC<HebrewReadingSessionProps> = ({
     }
   }, [userTranslation]);
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!feedback) onSubmit();
+    }
+  };
+
   const displayedText = !showMarkings ? stripNiqqud(currentParagraph) : currentParagraph;
   const isHelpState = feedback?.status === 'help' || feedback?.isHelpReveal;
   const showCorrection = feedback && (feedback.status !== 'correct' || isHelpState);
@@ -121,6 +128,7 @@ const HebrewReadingSession: React.FC<HebrewReadingSessionProps> = ({
             ref={textareaRef}
             value={userTranslation}
             onChange={(e) => setUserTranslation(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Type your English translation..."
             rows={1}
             className="w-full bg-slate-700/50 border-2 border-slate-600 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-cyan-400 text-slate-200 text-sm md:text-lg disabled:opacity-50 resize-none overflow-hidden box-border"

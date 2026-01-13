@@ -13,7 +13,7 @@ import DictionaryView from './components/DictionaryView';
 import LanguageReferenceModal from './components/LanguageReferenceModal';
 import SettingsModal from './components/SettingsModal';
 import { Feedback, VocabularyItem, PracticeMode, Language, VocabularyPracticeTarget, AppSettings } from './types';
-import { generateParagraph, checkTranslation, generateSpeech, generatePracticeWord } from './services/geminiService';
+import { generateParagraph, checkTranslation, generateSpeech, generateSpeechStream, generatePracticeWord, speakHebrew } from './services/geminiService';
 import { BookOpenIcon } from './components/icons/BookOpenIcon';
 import { BookmarkIcon } from './components/icons/BookmarkIcon';
 import { HomeIcon } from './components/icons/HomeIcon';
@@ -217,6 +217,20 @@ const App: React.FC = () => {
   const handleListen = async () => {
     if (!currentParagraph || !language) return;
     
+    // For Hebrew, use browser's speech synthesis
+    if (language === 'Hebrew') {
+      setIsLoadingAudio(true);
+      try {
+        await speakHebrew(currentParagraph, settings.volume);
+      } catch (e) {
+        setError("Audio failed. Make sure your browser supports Hebrew speech.");
+      } finally {
+        setIsLoadingAudio(false);
+      }
+      return;
+    }
+    
+    // For Thai and other languages, use Gemini TTS with streaming
     const playAudio = async (base64: string) => {
       if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       const ctx = audioContextRef.current;
@@ -243,9 +257,23 @@ const App: React.FC = () => {
 
     setIsLoadingAudio(true);
     try {
-      const base64 = await generateSpeech(currentParagraph, language, settings.voice);
-      setCurrentAudio(base64);
-      await playAudio(base64);
+      // Use streaming for instant playback
+      const audioChunks: string[] = [];
+      let isFirstChunk = true;
+      
+      await generateSpeechStream(currentParagraph, language, settings.voice, async (chunk) => {
+        audioChunks.push(chunk);
+        // Play first chunk immediately for low latency
+        if (isFirstChunk) {
+          isFirstChunk = false;
+          try { await playAudio(chunk); } catch (e) { /* ignore first chunk errors */ }
+        }
+      });
+      
+      // Cache the full audio for replay
+      if (audioChunks.length > 0) {
+        setCurrentAudio(audioChunks.join(''));
+      }
     } catch (e) {
         setError("Audio failed.");
     } finally {

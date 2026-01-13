@@ -106,7 +106,12 @@ export const generateParagraph = async (topic: string, language: Language, histo
     
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Generate ONE Beginner ${language} sentence about: ${chosenTheme}. EXCLUDE: [${history.slice(-10).join(", ")}]. ENSURE NO ENGLISH IS IN THE PARAGRAPH FIELD.`,
+      contents: `Generate ONE Beginner ${language} sentence about: ${chosenTheme}. EXCLUDE: [${history.slice(-10).join(", ")}].
+
+CRITICAL RULES:
+- 'paragraph' field: ONLY ${language} script. NO English. NO translations.
+- 'phonetic' field: ONLY romanized pronunciation/transliteration. NO English meaning. NO translations.
+- DO NOT include any translations anywhere - the user must guess the meaning.`,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
@@ -122,9 +127,32 @@ export const generateParagraph = async (topic: string, language: Language, histo
     });
     
     const result = safeParseJSON(response.text);
+    
+    // Clean up paragraph - language-aware filtering
+    let cleanParagraph = result.paragraph
+      .split('\n')[0]
+      .replace(/\(.*?\)/g, '')
+      .replace(/\[.*?\]/g, '')
+      .replace(/[a-zA-Z]/g, ''); // Remove any English letters
+    
+    // Remove the wrong language characters
+    if (language === 'Hebrew') {
+      cleanParagraph = cleanParagraph.replace(/[\u0E00-\u0E7F]/g, ''); // Remove Thai if Hebrew mode
+    } else if (language === 'Thai') {
+      cleanParagraph = cleanParagraph.replace(/[\u0590-\u05FF]/g, ''); // Remove Hebrew if Thai mode
+    }
+    cleanParagraph = cleanParagraph.trim();
+    
+    // Clean up phonetic - keep only romanization, remove translations
+    let cleanPhonetic = result.phonetic
+      .split(/[-–—=:\n]/)[0] // Take only the first part before any separator
+      .replace(/[\u0590-\u05FF]/g, '') // Remove Hebrew characters
+      .replace(/[\u0E00-\u0E7F]/g, '') // Remove Thai characters
+      .trim();
+    
     return { 
-      paragraph: result.paragraph.split('\n')[0].replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim(), 
-      phonetic: result.phonetic 
+      paragraph: cleanParagraph, 
+      phonetic: cleanPhonetic 
     };
   });
 };
@@ -207,22 +235,75 @@ export const checkWordTranslation = async (
   });
 };
 
+// Hebrew speech using browser's Web Speech API (Gemini TTS doesn't support Hebrew well)
+export const speakHebrew = (text: string, volume: number = 1): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    if (!('speechSynthesis' in window)) {
+      reject(new Error('Speech synthesis not supported'));
+      return;
+    }
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'he-IL';
+    utterance.volume = volume;
+    utterance.rate = 0.9;
+    
+    // Try to find a Hebrew voice
+    const voices = speechSynthesis.getVoices();
+    const hebrewVoice = voices.find(v => v.lang.startsWith('he'));
+    if (hebrewVoice) {
+      utterance.voice = hebrewVoice;
+    }
+    
+    utterance.onend = () => resolve();
+    utterance.onerror = (e) => reject(e);
+    
+    speechSynthesis.speak(utterance);
+  });
+};
+
+// Streaming speech generation - plays audio chunks as they arrive for lower latency
+export const generateSpeechStream = async (
+  text: string, 
+  language: Language, 
+  voice: string = 'Kore',
+  onAudioChunk: (base64: string) => void
+): Promise<void> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+  
+  // Clean text - remove parentheses content and brackets
+  let cleanText = text.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+  
+  if (!cleanText) throw new Error("No speakable text remaining after cleaning.");
+
+  const stream = await ai.models.generateContentStream({
+    model: "gemini-2.5-flash-preview-tts",
+    contents: [{ parts: [{ text: cleanText }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+    },
+  });
+
+  for await (const chunk of stream) {
+    const audioPart = chunk.candidates?.[0]?.content?.parts?.find(
+      p => p.inlineData?.mimeType?.startsWith('audio/')
+    );
+    if (audioPart?.inlineData?.data) {
+      onAudioChunk(audioPart.inlineData.data);
+    }
+  }
+};
+
 export const generateSpeech = async (text: string, language: Language, voice: string = 'Kore'): Promise<string> => {
   return withRetry(async () => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
     
-    // Clean text more reliably for TTS. 
-    let cleanText = text.replace(/\(.*\)/g, '').replace(/\[.*\]/g, '').trim();
+    // Clean text - remove parentheses content and brackets
+    let cleanText = text.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
     
-    // Keep only the relevant script + basic punctuation. 
-    if (language === 'Thai') {
-      const matches = cleanText.match(/[\u0E00-\u0E7F\s.,?!]+/g);
-      cleanText = matches ? matches.join('').trim() : '';
-    } else if (language === 'Hebrew') {
-      const matches = cleanText.match(/[\u0590-\u05FF\s.,?!]+/g);
-      cleanText = matches ? matches.join('').trim() : '';
-    }
-    
+    // For both languages, just use the cleaned text directly
+    // The AI generated it, so it should be valid
     if (!cleanText) throw new Error("No speakable text remaining after cleaning.");
 
     const response = await ai.models.generateContent({

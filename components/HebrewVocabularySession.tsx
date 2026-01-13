@@ -3,8 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { VocabularyPracticeTarget, VocabularyItem, AppSettings } from '../types';
 import ProgressBar from './ProgressBar';
 import { SpeakerIcon } from './icons/SpeakerIcon';
-import { generatePracticeWord, generateSpeech, checkWordTranslation } from '../services/geminiService';
-import { decode, decodeAudioData } from '../utils/audio';
+import { generatePracticeWord, checkWordTranslation, speakHebrew } from '../services/geminiService';
 import { stripNiqqud } from '../utils/hebrew';
 
 interface HebrewVocabularySessionProps {
@@ -20,7 +19,6 @@ interface HebrewVocabularySessionProps {
 }
 
 interface BufferItem extends VocabularyPracticeTarget {
-  audio?: string;
 }
 
 const HebrewVocabularySession: React.FC<HebrewVocabularySessionProps> = ({
@@ -43,7 +41,6 @@ const HebrewVocabularySession: React.FC<HebrewVocabularySessionProps> = ({
   
   const historyRef = useRef<string[]>([]);
   const lastFetchedIndexRef = useRef<number>(-1);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const nextItemRef = useRef<BufferItem | null>(null);
   const isPreloadingRef = useRef<boolean>(false);
 
@@ -52,14 +49,13 @@ const HebrewVocabularySession: React.FC<HebrewVocabularySessionProps> = ({
     isPreloadingRef.current = true;
     try {
       const wordData = await generatePracticeWord(topic, 'Hebrew', historyRef.current);
-      const audio = await generateSpeech(wordData.word, 'Hebrew', settings.voice).catch(() => undefined);
-      nextItemRef.current = { ...wordData, audio };
+      nextItemRef.current = { ...wordData };
     } catch (e) {
       console.warn("Preload failed", e);
     } finally {
       isPreloadingRef.current = false;
     }
-  }, [topic, progressCount, totalItems, settings.voice]);
+  }, [topic, progressCount, totalItems]);
 
   const fetchNewWord = useCallback(async () => {
     if (lastFetchedIndexRef.current === progressCount) return;
@@ -83,10 +79,6 @@ const HebrewVocabularySession: React.FC<HebrewVocabularySessionProps> = ({
       const wordData = await generatePracticeWord(topic, 'Hebrew', historyRef.current);
       historyRef.current.push(wordData.word);
       setCurrentTarget(wordData);
-      
-      generateSpeech(wordData.word, 'Hebrew', settings.voice).then(audio => {
-        setCurrentTarget(prev => prev?.word === wordData.word ? { ...prev, audio } : prev);
-      }).catch(() => {});
 
       preloadNext();
     } catch (e: any) { 
@@ -95,7 +87,7 @@ const HebrewVocabularySession: React.FC<HebrewVocabularySessionProps> = ({
     } finally { 
       setIsProcessing(false); 
     }
-  }, [topic, progressCount, preloadNext, settings.voice]);
+  }, [topic, progressCount, preloadNext]);
 
   useEffect(() => { 
     fetchNewWord(); 
@@ -104,36 +96,14 @@ const HebrewVocabularySession: React.FC<HebrewVocabularySessionProps> = ({
   const handleListen = async () => {
     if (!currentTarget) return;
 
-    const playAudio = async (base64: string) => {
-      if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      const ctx = audioContextRef.current;
-      if (ctx.state === 'suspended') await ctx.resume();
-      
-      const buf = await decodeAudioData(decode(base64), ctx, 24000, 1);
-      const src = ctx.createBufferSource();
-      const gainNode = ctx.createGain();
-      
-      src.buffer = buf;
-      gainNode.gain.value = settings.volume;
-      
-      src.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      src.start();
-    };
-
-    if (currentTarget.audio) {
-      try {
-        await playAudio(currentTarget.audio);
-        return;
-      } catch (e) { console.error("Cached play fail", e); }
-    }
-
     setIsAudioLoading(true);
     try {
-      const base64 = await generateSpeech(currentTarget.word, 'Hebrew', settings.voice);
-      setCurrentTarget(prev => prev ? { ...prev, audio: base64 } : prev);
-      await playAudio(base64);
-    } catch (e: any) { setError("Audio failed."); } finally { setIsAudioLoading(false); }
+      await speakHebrew(currentTarget.word, settings.volume);
+    } catch (e: any) { 
+      setError("Audio failed. Make sure your browser supports Hebrew speech."); 
+    } finally { 
+      setIsAudioLoading(false); 
+    }
   };
 
   const handleCheck = async () => {
