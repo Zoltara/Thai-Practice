@@ -1,0 +1,7 @@
+{
+  "name": "Language Practice",
+  "description": "An application to practice reading and speaking Thai or Hebrew by generating random content based on topics. Features AI feedback, speech generation, and pronunciation evaluation.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
